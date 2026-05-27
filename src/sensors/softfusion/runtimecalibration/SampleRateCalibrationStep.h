@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <optional>
 
 #include "CalibrationStep.h"
@@ -52,9 +53,21 @@ public:
 			return TickResult::CONTINUE;
 		}
 
-		float accelTimestep = elapsedTime / calibrationData.value().accelSamples;
-		float gyroTimestep = elapsedTime / calibrationData.value().gyroSamples;
-		float tempTimestep = elapsedTime / calibrationData.value().tempSamples;
+		const auto& data = calibrationData.value();
+		if (data.accelSamples == 0 || data.gyroSamples == 0 || data.tempSamples == 0) {
+			return TickResult::SKIP;
+		}
+
+		float accelTimestep = elapsedTime / data.accelSamples;
+		float gyroTimestep = elapsedTime / data.gyroSamples;
+		float tempTimestep = elapsedTime / data.tempSamples;
+
+		if (sensorConfig.sensorTimestepsCalibrated
+			&& !isSignificantChange(sensorConfig.A_Ts, accelTimestep)
+			&& !isSignificantChange(sensorConfig.G_Ts, gyroTimestep)
+			&& !isSignificantChange(sensorConfig.T_Ts, tempTimestep)) {
+			return TickResult::SKIP;
+		}
 
 		sensorConfig.A_Ts = accelTimestep;
 		sensorConfig.G_Ts = gyroTimestep;
@@ -68,7 +81,7 @@ public:
 	bool requiresRest() override final { return false; }
 
 	void signalOverwhelmed() override final {
-		// Not good, restart
+		// Restart calibration after an overrun.
 		calibrationData.value().accelSamples = 0;
 		calibrationData.value().gyroSamples = 0;
 		calibrationData.value().tempSamples = 0;
@@ -79,7 +92,7 @@ public:
 		calibrationData.value().accelSamples++;
 	}
 
-	void processGyroSample(const SensorRawT GyroSample[3]) override final {
+	void processGyroSample(const SensorRawT gyroSample[3]) override final {
 		calibrationData.value().gyroSamples++;
 	}
 
@@ -89,6 +102,15 @@ public:
 
 private:
 	static constexpr float samplingRateCalibrationSeconds = 5;
+	static constexpr float timestepChangeThreshold = 0.01f;
+
+	static bool isSignificantChange(float oldTimestep, float newTimestep) {
+		float baseline = std::abs(oldTimestep);
+		if (baseline <= 0.0f) {
+			return true;
+		}
+		return std::abs(oldTimestep - newTimestep) / baseline > timestepChangeThreshold;
+	}
 
 	struct CalibrationData {
 		uint64_t startMillis = 0;

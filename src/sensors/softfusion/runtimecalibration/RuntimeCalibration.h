@@ -25,6 +25,8 @@
 
 #include <vector3.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 #include "../../../GlobalVars.h"
@@ -68,28 +70,14 @@ public:
 	) final {
 		return sensorCalibration.type
 				== SlimeVR::Configuration::SensorConfigType::RUNTIME_CALIBRATION
-			&& (sensorCalibration.data.sfusion.ImuType == IMU::Type)
-			&& (sensorCalibration.data.sfusion.MotionlessDataLen
+			&& (sensorCalibration.data.runtimeCalibration.ImuType == IMU::Type)
+			&& (sensorCalibration.data.runtimeCalibration.MotionlessDataLen
 				== Base::MotionlessCalibDataSize());
 	}
 
 	void assignCalibration(const Configuration::SensorConfig& sensorCalibration) final {
 		calibration = sensorCalibration.data.runtimeCalibration;
-		activeCalibration = sensorCalibration.data.runtimeCalibration;
-		if (!toggles.getToggle(SensorToggles::CalibrationEnabled)) {
-			activeCalibration.gyroPointsCalibrated = 0;
-			for (size_t i = 0; i < 3; i++) {
-				activeCalibration.G_off1[i] = 0;
-				activeCalibration.G_off2[i] = 0;
-			}
-
-			for (size_t i = 0; i < 3; i++) {
-				activeCalibration.accelCalibrated[i] = false;
-				activeCalibration.A_off[i] = 0;
-			}
-		} else {
-			calculateZROChange();
-		}
+		refreshActiveCalibration();
 
 		currentStep = &nullCalibrationStep;
 	}
@@ -98,12 +86,11 @@ public:
 		startupMillis = millis();
 
 		gyroBiasCalibrationStep.swapCalibrationIfNecessary();
+		refreshActiveCalibration();
 
 		currentStep = &sampleRateCalibrationStep;
 		currentStep->start();
 		nextCalibrationStep = CalibrationStepEnum::SAMPLING_RATE;
-
-		calculateZROChange();
 
 		printCalibration();
 	}
@@ -143,7 +130,7 @@ public:
 		switch (result) {
 			case CalibrationStep<RawSensorT>::TickResult::DONE:
 				if (nextCalibrationStep == CalibrationStepEnum::SAMPLING_RATE) {
-					stepCalibrationForward(true, false);
+					stepCalibrationForward();
 					break;
 				}
 				stepCalibrationForward();
@@ -180,6 +167,8 @@ public:
 
 	float getGyroTimestep() final { return activeCalibration.G_Ts; }
 
+	float getMagTimestep() final { return activeCalibration.M_Ts; }
+
 	float getTempTimestep() final { return activeCalibration.T_Ts; }
 
 	const uint8_t* getMotionlessCalibrationData() final {
@@ -213,6 +202,7 @@ public:
 	void calculateZROChange() {
 		if (activeCalibration.gyroPointsCalibrated < 2) {
 			activeZROChange = IMU::TemperatureZROChange;
+			return;
 		}
 
 		float diffX = (activeCalibration.G_off2[0] - activeCalibration.G_off1[0])
@@ -224,15 +214,39 @@ public:
 
 		float maxDiff
 			= std::max(std::max(std::abs(diffX), std::abs(diffY)), std::abs(diffZ));
+		float tempDiff = activeCalibration.gyroMeasurementTemperature2
+					   - activeCalibration.gyroMeasurementTemperature1;
 
-		activeZROChange = 0.1f / maxDiff
-						/ (activeCalibration.gyroMeasurementTemperature2
-						   - activeCalibration.gyroMeasurementTemperature1);
+		if (maxDiff <= 0.0f || std::abs(tempDiff) <= 0.0f) {
+			activeZROChange = IMU::TemperatureZROChange;
+			return;
+		}
+
+		activeZROChange = 0.1f / maxDiff / tempDiff;
 	}
 
 	float getZROChange() final { return activeZROChange; }
 
 private:
+	void refreshActiveCalibration() {
+		activeCalibration = calibration;
+
+		if (!toggles.getToggle(SensorToggles::CalibrationEnabled)) {
+			activeCalibration.gyroPointsCalibrated = 0;
+			for (size_t i = 0; i < 3; i++) {
+				activeCalibration.G_off1[i] = 0;
+				activeCalibration.G_off2[i] = 0;
+			}
+
+			for (size_t i = 0; i < 3; i++) {
+				activeCalibration.accelCalibrated[i] = false;
+				activeCalibration.A_off[i] = 0;
+			}
+		}
+
+		calculateZROChange();
+	}
+
 	enum class CalibrationStepEnum {
 		NONE,
 		SAMPLING_RATE,
@@ -259,6 +273,7 @@ private:
 
 	void stepCalibrationForward(bool print = true, bool save = true) {
 		currentStep->cancel();
+		refreshActiveCalibration();
 		switch (nextCalibrationStep) {
 			case CalibrationStepEnum::NONE:
 				return;
@@ -402,26 +417,8 @@ private:
 	static constexpr float initialStartupDelaySeconds = 5;
 	uint64_t startupMillis = millis();
 
-	SampleRateCalibrationStep<RawSensorT> sampleRateCalibrationStep{activeCalibration};
-	MotionlessCalibrationStep<IMU, RawSensorT> motionlessCalibrationStep{
-		calibration,
-		sensor
-	};
-	GyroBiasCalibrationStep<RawSensorT> gyroBiasCalibrationStep{calibration};
-	AccelBiasCalibrationStep<RawSensorT> accelBiasCalibrationStep{
-		calibration,
-		static_cast<float>(Consts::AScale)
-	};
-	NullCalibrationStep<RawSensorT> nullCalibrationStep{calibration};
-
-	CalibrationStep<RawSensorT>* currentStep = &nullCalibrationStep;
-
-	bool isCalibrating = false;
-	bool skippedAStep = false;
-	bool lastTickRest = false;
-
 	SlimeVR::Configuration::RuntimeCalibrationSensorConfig calibration{
-		// let's create here transparent calibration that doesn't affect input data
+		// Create a transparent calibration that does not affect input data.
 		.ImuType = {IMU::Type},
 		.MotionlessDataLen = {Base::MotionlessCalibDataSize()},
 
@@ -447,6 +444,24 @@ private:
 	float activeZROChange = 0;
 
 	Configuration::RuntimeCalibrationSensorConfig activeCalibration = calibration;
+
+	SampleRateCalibrationStep<RawSensorT> sampleRateCalibrationStep{calibration};
+	MotionlessCalibrationStep<IMU, RawSensorT> motionlessCalibrationStep{
+		calibration,
+		sensor
+	};
+	GyroBiasCalibrationStep<RawSensorT> gyroBiasCalibrationStep{calibration};
+	AccelBiasCalibrationStep<RawSensorT> accelBiasCalibrationStep{
+		calibration,
+		static_cast<float>(Consts::AScale)
+	};
+	NullCalibrationStep<RawSensorT> nullCalibrationStep{calibration};
+
+	CalibrationStep<RawSensorT>* currentStep = &nullCalibrationStep;
+
+	bool isCalibrating = false;
+	bool skippedAStep = false;
+	bool lastTickRest = false;
 
 	using Base::fusion;
 	using Base::logger;
