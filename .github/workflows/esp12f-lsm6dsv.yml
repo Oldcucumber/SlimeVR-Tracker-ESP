@@ -1,0 +1,71 @@
+name: ESP12F LSM6DSV Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio-esp12f-lsm6dsv
+
+      - name: Get tags
+        run: git fetch --quiet --tags origin --recurse-submodules=no --force
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO and its dependencies
+        run: |
+          echo "::group::Install Python packages"
+          python -m pip install --upgrade --quiet pip
+          pip install --upgrade --quiet platformio
+          echo "::endgroup::"
+
+      - name: Build ESP12F LSM6DSV firmware
+        env:
+          SLIMEVR_OVERRIDE_DEFAULTS: >-
+            {"SENSORS":[{"protocol":"I2C","imu":"IMU_LSM6DSV","int":"13","rotation":"DEG_270","scl":"12","sda":"14"}],"BATTERY":{"type":"BAT_EXTERNAL","r1":100,"r2":220,"shieldR":180,"pin":"A0"},"LED":{"LED_PIN":"2","LED_INVERTED":true}}
+        run: |
+          mkdir -p build
+          echo "::group::PlatformIO build output"
+          set +e
+          platformio run -e BOARD_WEMOSD1MINI 2>&1 | tee build/platformio.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "::endgroup::"
+
+          if [ "$status" -ne 0 ]; then
+            echo "::error::PlatformIO build failed"
+            echo "Last 200 lines of PlatformIO output:"
+            tail -n 200 build/platformio.log
+            exit "$status"
+          fi
+
+      - name: Prepare firmware artifact
+        run: |
+          cp .pio/build/BOARD_WEMOSD1MINI/firmware.bin build/ESP12F_LSM6DSV-firmware.bin
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp12f-lsm6dsv-build-log
+          path: build/platformio.log
+          if-no-files-found: ignore
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp12f-lsm6dsv-firmware
+          path: build/ESP12F_LSM6DSV-firmware.bin
