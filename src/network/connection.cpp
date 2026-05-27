@@ -124,12 +124,6 @@ size_t Connection::write(const uint8_t* buffer, size_t size) {
 
 size_t Connection::write(uint8_t byte) { return write(&byte, 1); }
 
-bool Connection::sendFloat(float f) {
-	convert_to_chars(f, m_Buf);
-
-	return write(m_Buf, sizeof(f)) != 0;
-}
-
 bool Connection::sendByte(uint8_t c) { return write(&c, 1) != 0; }
 
 bool Connection::sendShort(uint16_t i) {
@@ -184,16 +178,6 @@ bool Connection::sendPacketType(SendPacketType type) {
 
 	return sendByte(static_cast<uint8_t>(type));
 }
-
-bool Connection::sendLongString(const char* str) {
-	int size = strlen(str);
-
-	MUST_TRANSFER_BOOL(sendInt(size));
-
-	return sendBytes((const uint8_t*)str, size);
-}
-
-int Connection::getWriteError() { return m_UDP.getWriteError(); }
 
 // PACKET_HEARTBEAT 0
 void Connection::sendHeartbeat() {
@@ -559,8 +543,13 @@ void Connection::searchForServer() {
 
 		// Handshake is different, it has 3 in the first byte, not the 4th, and data
 		// starts right after
-		if (static_cast<ReceivePacketType>(m_Packet[0])
-			== ReceivePacketType::Handshake) {
+		if (len >= 1
+			&& static_cast<ReceivePacketType>(m_Packet[0])
+				   == ReceivePacketType::Handshake) {
+			if (len < 13) {
+				m_Logger.error("Received too short handshake packet");
+				continue;
+			}
 			if (strncmp((char*)m_Packet + 1, "Hey OVR =D 5", 12) != 0) {
 				m_Logger.error("Received invalid handshake packet");
 				continue;
@@ -678,6 +667,13 @@ void Connection::update() {
 	(void)packetSize;
 #endif
 
+	if (len < 4) {
+#ifdef DEBUG_NETWORK
+		m_Logger.warn("Received too short packet");
+#endif
+		return;
+	}
+
 	if (static_cast<ReceivePacketType>(m_Packet[3]) == ReceivePacketType::Handshake) {
 		m_Logger.warn("Handshake received again, ignoring");
 		return;
@@ -712,8 +708,12 @@ void Connection::update() {
 				break;
 			}
 
-			SensorInfoPacket sensorInfoPacket;
-			memcpy(&sensorInfoPacket, m_Packet + 4, sizeof(sensorInfoPacket));
+			SensorInfoPacket sensorInfoPacket{};
+			size_t sensorInfoPacketLength = len - 4;
+			if (sensorInfoPacketLength > sizeof(sensorInfoPacket)) {
+				sensorInfoPacketLength = sizeof(sensorInfoPacket);
+			}
+			memcpy(&sensorInfoPacket, m_Packet + 4, sensorInfoPacketLength);
 
 			for (int i = 0; i < (int)sensors.size(); i++) {
 				if (sensorInfoPacket.sensorId == sensors[i]->getSensorId()) {
@@ -769,9 +769,10 @@ void Connection::update() {
 			uint8_t sensorId = setConfigFlagPacket.sensorId;
 			SensorToggles flag = setConfigFlagPacket.flag;
 			bool newState = setConfigFlagPacket.newState;
+			bool configChanged = false;
 			if (sensorId == UINT8_MAX) {
 				for (auto& sensor : sensors) {
-					sensor->setFlag(flag, newState);
+					configChanged |= sensor->setFlag(flag, newState);
 				}
 			} else {
 				auto& sensors = sensorManager.getSensors();
@@ -783,10 +784,12 @@ void Connection::update() {
 				}
 
 				auto& sensor = sensors[sensorId];
-				sensor->setFlag(flag, newState);
+				configChanged = sensor->setFlag(flag, newState);
 			}
 			sendAcknowledgeConfigChange(sensorId, flag);
-			configuration.save();
+			if (configChanged) {
+				configuration.save();
+			}
 			break;
 		}
 	}

@@ -158,17 +158,21 @@ void Sensor::markRestCalibrationComplete(bool completed) {
 	restCalibrationComplete = completed;
 }
 
-void Sensor::setFlag(SensorToggles toggle, bool state) {
+bool Sensor::setFlag(SensorToggles toggle, bool state) {
 	if (!isFlagSupported(toggle)) {
 		m_Logger.error(
 			"Toggle %s isn't supported by this sensor!",
 			SensorToggleState::toggleToString(toggle)
 		);
-		return;
+		return false;
+	}
+
+	if (toggles.getToggle(toggle) == state) {
+		return false;
 	}
 
 	toggles.setToggle(toggle, state);
 
 	configuration.setSensorToggles(sensorId, toggles);
-	configuration.save();
+	return true;
 }

@@ -4,6 +4,10 @@ SensorToggleState::SensorToggleState(SensorToggleValues values)
 	: values{values} {}
 
 void SensorToggleState::setToggle(SensorToggles toggle, bool state) {
+	if (getToggle(toggle) == state) {
+		return;
+	}
+
 	switch (toggle) {
 		case SensorToggles::MagEnabled:
 			values.magEnabled = state;
@@ -15,6 +19,8 @@ void SensorToggleState::setToggle(SensorToggles toggle, bool state) {
 			values.tempGradientCalibrationEnabled = state;
 			break;
 	}
+
+	emitToggleChange(toggle, state);
 }
 
 bool SensorToggleState::getToggle(SensorToggles toggle) const {
