@@ -57,6 +57,7 @@ void swapI2C(uint8_t sclPin, uint8_t sdaPin) {
 		}
 #else
 		Wire.begin(static_cast<int>(sdaPin), static_cast<int>(sclPin));
+		Wire.setClock(I2C_SPEED);
 #endif
 
 		activeSCLPin = sclPin;

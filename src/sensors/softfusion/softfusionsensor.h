@@ -229,17 +229,11 @@ public:
 			tempGradientCalculator.tick();
 		}
 
-		constexpr uint32_t targetPollIntervalMicros = 6000;
-		uint32_t elapsed = now - m_lastPollTime;
-		if (elapsed >= targetPollIntervalMicros) {
-			m_lastPollTime = now - (elapsed - targetPollIntervalMicros);
-		}
-
 		// send new fusion values when time is up
 		now = micros();
 		constexpr float maxSendRateHz = 100.0f;
 		constexpr uint32_t sendInterval = 1.0f / maxSendRateHz * 1e6f;
-		elapsed = now - m_lastRotationPacketSent;
+		uint32_t elapsed = now - m_lastRotationPacketSent;
 		if (elapsed >= sendInterval) {
 			auto overwhelmed = m_sensor.bulkRead({
 				[&](const auto sample[3], float AccTs) {
@@ -379,7 +373,6 @@ public:
 	Calib calibrator{m_fusion, m_sensor, sensorId, m_Logger, toggles};
 
 	SensorStatus m_status = SensorStatus::SENSOR_OFFLINE;
-	uint32_t m_lastPollTime = micros();
 	uint32_t m_lastRotationUpdateMillis = 0;
 	uint32_t m_lastRotationPacketSent = 0;
 	uint32_t m_lastTemperaturePacketSent = 0;

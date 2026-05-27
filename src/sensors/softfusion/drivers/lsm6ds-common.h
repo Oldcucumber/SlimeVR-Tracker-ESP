@@ -54,7 +54,7 @@ struct LSM6DSOutputHandler {
 
 	static constexpr size_t FullFifoEntrySize = sizeof(FifoEntryAligned) + 1;
 
-	template <typename Regs>
+	template <typename Regs, size_t MaxReadings = 8>
 	bool bulkRead(
 		DriverCallbacks<int16_t>&& callbacks,
 		float GyrTs,
@@ -70,11 +70,11 @@ struct LSM6DSOutputHandler {
 		if (fifo_status & FIFO_OVERRUN_LATCHED_MASK) {
 			// FIFO overrun is expected to happen during startup and calibration
 			m_Logger.error(
-				"FIFO OVERRUN! This occuring during normal usage is an issue."
+				"FIFO OVERRUN! This occurring during normal usage is an issue."
 			);
 		}
 
-		std::array<uint8_t, FullFifoEntrySize * 8> read_buffer;  // max 8 readings
+		std::array<uint8_t, FullFifoEntrySize * MaxReadings> read_buffer;
 		const auto bytes_to_read = std::min(
 									   static_cast<size_t>(read_buffer.size()),
 									   static_cast<size_t>(fifo_bytes)
@@ -89,7 +89,7 @@ struct LSM6DSOutputHandler {
 				entry.raw,
 				&read_buffer[i + 0x1],
 				sizeof(FifoEntryAligned)
-			);  // skip fifo header
+			);  // Skip FIFO header
 
 			switch (tag) {
 				case 0x01:  // Gyro NC

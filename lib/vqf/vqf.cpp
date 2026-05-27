@@ -125,8 +125,10 @@ void VQF::updateAcc(const vqf_real_t acc[3])
     quatMultiply(accCorrQuat, state.accQuat, state.accQuat);
     normalize(state.accQuat, 4);
 
+#ifdef VQF_CALCULATE_ACC_CORR_ANGULAR_RATE
     // calculate correction angular rate to facilitate debugging
     state.lastAccCorrAngularRate = acos(accEarth[2])/coeffs.accTs;
+#endif
 
     // bias estimation
 #ifndef VQF_NO_MOTION_BIAS_ESTIMATION

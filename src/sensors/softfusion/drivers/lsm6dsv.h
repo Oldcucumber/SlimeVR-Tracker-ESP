@@ -32,9 +32,8 @@
 
 namespace SlimeVR::Sensors::SoftFusion::Drivers {
 
-// Driver uses acceleration range at 4g
-// and gyroscope range at 1000dps
-// Gyroscope ODR = 240Hz, accel ODR = 120Hz
+// Driver uses the 4g acceleration range and the 1000dps gyroscope range.
+// Gyroscope ODR = 240Hz, accelerometer ODR = 120Hz.
 
 struct LSM6DSV : LSM6DSOutputHandler {
 	static constexpr uint8_t Address = 0x6a;
@@ -60,6 +59,7 @@ struct LSM6DSV : LSM6DSOutputHandler {
 	static constexpr float TemperatureZROChange = 16.667f;
 
 	static constexpr VQFParams SensorVQFParams{};
+	static constexpr size_t MaxFifoReadings = 16;
 
 	struct Regs {
 		struct WhoAmI {
@@ -111,7 +111,7 @@ struct LSM6DSV : LSM6DSOutputHandler {
 		: LSM6DSOutputHandler(registerInterface, logger) {}
 
 	bool initialize() {
-		// perform initialization step
+		// Reset and configure the sensor.
 		m_RegisterInterface.writeReg(Regs::Ctrl3C::reg, Regs::Ctrl3C::valueSwReset);
 		delay(20);
 		m_RegisterInterface.writeReg(Regs::HAODRCFG::reg, Regs::HAODRCFG::value);
@@ -132,7 +132,7 @@ struct LSM6DSV : LSM6DSOutputHandler {
 	}
 
 	bool bulkRead(DriverCallbacks<int16_t>&& callbacks) {
-		return LSM6DSOutputHandler::template bulkRead<Regs>(
+		return LSM6DSOutputHandler::template bulkRead<Regs, MaxFifoReadings>(
 			std::move(callbacks),
 			GyrTs,
 			AccTs,
