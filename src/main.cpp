@@ -69,34 +69,43 @@ void setup() {
 	logger.info("SlimeVR v" FIRMWARE_VERSION " starting up...");
 
 	char vendorBuffer[512];
-	size_t writtenLength;
+	int writtenLength;
 
 	if (strlen(VENDOR_URL) == 0) {
-		sprintf(
+		writtenLength = snprintf(
 			vendorBuffer,
-			"Vendor: %s, product: %s%n",
+			sizeof(vendorBuffer),
+			"Vendor: %s, product: %s",
 			VENDOR_NAME,
-			PRODUCT_NAME,
-			&writtenLength
+			PRODUCT_NAME
 		);
 	} else {
-		sprintf(
+		writtenLength = snprintf(
 			vendorBuffer,
-			"Vendor: %s (%s), product: %s%n",
+			sizeof(vendorBuffer),
+			"Vendor: %s (%s), product: %s",
 			VENDOR_NAME,
 			VENDOR_URL,
-			PRODUCT_NAME,
-			&writtenLength
+			PRODUCT_NAME
 		);
 	}
 
+	if (writtenLength < 0) {
+		writtenLength = 0;
+		vendorBuffer[0] = '\0';
+	}
+
 	if (strlen(UPDATE_ADDRESS) > 0 && strlen(UPDATE_NAME) > 0) {
-		sprintf(
-			vendorBuffer + writtenLength,
-			", firmware update url: %s, name: %s",
-			UPDATE_ADDRESS,
-			UPDATE_NAME
-		);
+		size_t usedLength = static_cast<size_t>(writtenLength);
+		if (usedLength < sizeof(vendorBuffer)) {
+			snprintf(
+				vendorBuffer + usedLength,
+				sizeof(vendorBuffer) - usedLength,
+				", firmware update url: %s, name: %s",
+				UPDATE_ADDRESS,
+				UPDATE_NAME
+			);
+		}
 	}
 	logger.info("%s", vendorBuffer);
 
