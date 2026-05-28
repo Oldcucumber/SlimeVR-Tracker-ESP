@@ -417,6 +417,24 @@ void Configuration::print() {
 				);
 				break;
 
+			case SensorConfigType::RUNTIME_CALIBRATION:
+				m_Logger.info(
+					"            Timesteps  : A=%f, G=%f, M=%f, T=%f",
+					c.data.runtimeCalibration.A_Ts,
+					c.data.runtimeCalibration.G_Ts,
+					c.data.runtimeCalibration.M_Ts,
+					c.data.runtimeCalibration.T_Ts
+				);
+				m_Logger.info(
+					"            Gyro points: %d",
+					c.data.runtimeCalibration.gyroPointsCalibrated
+				);
+				m_Logger.info(
+					"            A_off      : %f, %f, %f",
+					UNPACK_VECTOR_ARRAY(c.data.runtimeCalibration.A_off)
+				);
+				break;
+
 			case SensorConfigType::ICM20948:
 				m_Logger.info(
 					"            G: %d, %d, %d",

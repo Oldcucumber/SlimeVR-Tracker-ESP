@@ -180,6 +180,8 @@ void WiFiNetwork::upkeep() {
 	switch (wifiState) {
 		case WiFiReconnectionStatus::NotSetup:  // Wasn't set up
 			return;
+		case WiFiReconnectionStatus::Success:  // Already connected
+			return;
 		case WiFiReconnectionStatus::SavedAttempt:  // Couldn't connect with
 													// first set of
 													// credentials

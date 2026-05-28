@@ -176,8 +176,8 @@ void printState() {
 		FIRMWARE_VERSION,
 		wifiNetwork.getAddress().toString().c_str(),
 		WiFi.macAddress().c_str(),
-		statusManager.getStatus(),
-		wifiNetwork.getWiFiState()
+		static_cast<int>(statusManager.getStatus()),
+		static_cast<int>(wifiNetwork.getWiFiState())
 	);
 
 	logger.info("%s", FULL_VENDOR_STR);
@@ -265,9 +265,9 @@ void cmdGet(CmdParser* parser) {
 			  "IMU_ROTATION=%f\n"
 			  "SECOND_IMU_ROTATION=%f\n"
 			  "BATTERY_MONITOR=%d\n"
-			  "BATTERY_SHIELD_RESISTANCE=%d\n"
-			  "BATTERY_SHIELD_R1=%d\n"
-			  "BATTERY_SHIELD_R2=%d\n"
+			  "BATTERY_SHIELD_RESISTANCE=%f\n"
+			  "BATTERY_SHIELD_R1=%f\n"
+			  "BATTERY_SHIELD_R2=%f\n"
 			  "PIN_IMU_SDA=%d\n"
 			  "PIN_IMU_SCL=%d\n"
 			  "PIN_IMU_INT=%d\n"
@@ -307,8 +307,8 @@ void cmdGet(CmdParser* parser) {
 			FIRMWARE_VERSION,
 			wifiNetwork.getAddress().toString().c_str(),
 			WiFi.macAddress().c_str(),
-			statusManager.getStatus(),
-			wifiNetwork.getWiFiState()
+			static_cast<int>(statusManager.getStatus()),
+			static_cast<int>(wifiNetwork.getWiFiState())
 		);
 		auto& sensor0 = sensorManager.getSensors()[0];
 		sensor0->motionLoop();
