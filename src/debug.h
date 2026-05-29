@@ -112,6 +112,18 @@
 #define DEBUG_MEASURE_SENSOR_TIME_TAKEN false
 #endif
 
+#ifndef ENABLE_TELEMETRY
+#define ENABLE_TELEMETRY true
+#endif
+
+#ifndef TELEMETRY_PORT
+#define TELEMETRY_PORT 6970
+#endif
+
+#ifndef TELEMETRY_INTERVAL_MS
+#define TELEMETRY_INTERVAL_MS 1000
+#endif
+
 #ifndef USE_OTA_TIMEOUT
 #define USE_OTA_TIMEOUT false
 #endif
