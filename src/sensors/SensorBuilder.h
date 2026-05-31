@@ -212,6 +212,13 @@ public:
 		sensorInterface->init();
 		sensorInterface->swapIn();
 
+#if ESP8266_LSM6DSV_EXPERIMENT
+		return checkSensorsPresent<AccessInterface, SoftFusionLSM6DSV>(
+			sensorID,
+			sensorInterface,
+			accessInterface
+		);
+#else
 		return checkSensorsPresent<
 			AccessInterface,
 			// SoftFusionLSM6DS3TRC,
@@ -224,6 +231,7 @@ public:
 			SoftFusionICM45686,
 			// SoftFusionICM45605
 			BNO085Sensor>(sensorID, sensorInterface, accessInterface);
+#endif
 	}
 
 	template <typename SensorType, typename AccessInterface>

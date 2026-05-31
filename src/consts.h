@@ -70,6 +70,53 @@ enum class SensorTypeID : uint8_t {
 #define IMU_ICM45686 SoftFusionICM45686
 #define IMU_ICM45605 SoftFusionICM45605
 
+#ifndef ESP8266_LSM6DSV_EXPERIMENT
+#define ESP8266_LSM6DSV_EXPERIMENT 0
+#endif
+
+#if ESP8266_LSM6DSV_EXPERIMENT
+#undef IMU_AUTO
+#undef IMU_UNKNOWN
+#undef IMU_MPU9250
+#undef IMU_MPU6500
+#undef IMU_BNO080
+#undef IMU_BNO085
+#undef IMU_BNO055
+#undef IMU_MPU6050
+#undef IMU_BNO086
+#undef IMU_BMI160
+#undef IMU_ICM20948
+#undef IMU_ICM42688
+#undef IMU_BMI270
+#undef IMU_LSM6DS3TRC
+#undef IMU_LSM6DSV
+#undef IMU_LSM6DSO
+#undef IMU_LSM6DSR
+#undef IMU_MPU6050_SF
+#undef IMU_ICM45686
+#undef IMU_ICM45605
+#define IMU_AUTO ErroneousSensor
+#define IMU_UNKNOWN ErroneousSensor
+#define IMU_MPU9250 ErroneousSensor
+#define IMU_MPU6500 ErroneousSensor
+#define IMU_BNO080 ErroneousSensor
+#define IMU_BNO085 ErroneousSensor
+#define IMU_BNO055 ErroneousSensor
+#define IMU_MPU6050 ErroneousSensor
+#define IMU_BNO086 ErroneousSensor
+#define IMU_BMI160 ErroneousSensor
+#define IMU_ICM20948 ErroneousSensor
+#define IMU_ICM42688 ErroneousSensor
+#define IMU_BMI270 ErroneousSensor
+#define IMU_LSM6DS3TRC ErroneousSensor
+#define IMU_LSM6DSV SoftFusionLSM6DSV
+#define IMU_LSM6DSO ErroneousSensor
+#define IMU_LSM6DSR ErroneousSensor
+#define IMU_MPU6050_SF ErroneousSensor
+#define IMU_ICM45686 ErroneousSensor
+#define IMU_ICM45605 ErroneousSensor
+#endif
+
 #define IMU_DEV_RESERVED 250  // Reserved, should not be used in any release firmware
 
 #define BOARD_UNKNOWN 0

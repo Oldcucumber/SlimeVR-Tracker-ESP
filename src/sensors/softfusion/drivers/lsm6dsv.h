@@ -30,6 +30,14 @@
 #include "lsm6ds-common.h"
 #include "vqf.h"
 
+#ifndef LSM6DSV_SFLP_EXPERIMENT
+#define LSM6DSV_SFLP_EXPERIMENT 0
+#endif
+
+#ifndef LSM6DSV_SFLP_ODR_HZ
+#define LSM6DSV_SFLP_ODR_HZ 120
+#endif
+
 namespace SlimeVR::Sensors::SoftFusion::Drivers {
 
 // Driver uses the 4g acceleration range and the 1000dps gyroscope range.
@@ -49,6 +57,9 @@ struct LSM6DSV : LSM6DSOutputHandler {
 	static constexpr float AccTs = 1.0 / AccFreq;
 	static constexpr float MagTs = 1.0 / MagFreq;
 	static constexpr float TempTs = 1.0 / TempFreq;
+	static constexpr bool UsesSflp = LSM6DSV_SFLP_EXPERIMENT != 0;
+	static constexpr float SflpFreq = LSM6DSV_SFLP_ODR_HZ;
+	static constexpr float SflpTs = 1.0 / SflpFreq;
 
 	static constexpr float GyroSensitivity = 1000 / 35.0f;
 	static constexpr float AccelSensitivity = 1000 / 0.122f;
@@ -65,6 +76,11 @@ struct LSM6DSV : LSM6DSOutputHandler {
 		struct WhoAmI {
 			static constexpr uint8_t reg = 0x0f;
 			static constexpr uint8_t value = 0x70;
+		};
+		struct FuncCfgAccess {
+			static constexpr uint8_t reg = 0x01;
+			static constexpr uint8_t valueMainBank = 0;
+			static constexpr uint8_t valueEmbeddedFuncBank = (1 << 7);
 		};
 		struct HAODRCFG {
 			static constexpr uint8_t reg = 0x62;
@@ -95,12 +111,45 @@ struct LSM6DSV : LSM6DSOutputHandler {
 		struct FifoCtrl3BDR {
 			static constexpr uint8_t reg = 0x09;
 			static constexpr uint8_t value
-				= 0b01110110;  // Gyroscope batched into FIFO at 240Hz, Accel at 120Hz
+				= UsesSflp
+					? 0
+					: 0b01110110;  // Gyroscope at 240Hz, Accel at 120Hz
 		};
 		struct FifoCtrl4Mode {
 			static constexpr uint8_t reg = 0x0a;
 			static constexpr uint8_t value = (0b110110);  // continuous mode,
-														  // temperature at 60Hz
+															  // temperature at 60Hz
+		};
+		struct EmbFuncEnA {
+			static constexpr uint8_t reg = 0x04;
+			static constexpr uint8_t maskSflpGame = (1 << 1);
+			static constexpr uint8_t valueSflpGame = (1 << 1);
+		};
+		struct EmbFuncFifoEnA {
+			static constexpr uint8_t reg = 0x44;
+			static constexpr uint8_t maskSflpGame = (1 << 1);
+			static constexpr uint8_t valueSflpGame = (1 << 1);
+		};
+		struct SflpOdr {
+			static constexpr uint8_t reg = 0x5e;
+			static constexpr uint8_t mask = (0b111 << 3);
+			static constexpr uint8_t value =
+#if LSM6DSV_SFLP_ODR_HZ == 15
+				(0 << 3)
+#elif LSM6DSV_SFLP_ODR_HZ == 30
+				(1 << 3)
+#elif LSM6DSV_SFLP_ODR_HZ == 60
+				(2 << 3)
+#elif LSM6DSV_SFLP_ODR_HZ == 120
+				(3 << 3)
+#elif LSM6DSV_SFLP_ODR_HZ == 240
+				(4 << 3)
+#elif LSM6DSV_SFLP_ODR_HZ == 480
+				(5 << 3)
+#else
+#error "LSM6DSV_SFLP_ODR_HZ must be one of 15, 30, 60, 120, 240, 480"
+#endif
+				;
 		};
 
 		static constexpr uint8_t FifoStatus = 0x1b;
@@ -109,6 +158,40 @@ struct LSM6DSV : LSM6DSOutputHandler {
 
 	LSM6DSV(RegisterInterface& registerInterface, SlimeVR::Logging::Logger& logger)
 		: LSM6DSOutputHandler(registerInterface, logger) {}
+
+	void setEmbeddedFunctionBank(bool enabled) {
+		m_RegisterInterface.writeReg(
+			Regs::FuncCfgAccess::reg,
+			enabled ? Regs::FuncCfgAccess::valueEmbeddedFuncBank
+					: Regs::FuncCfgAccess::valueMainBank
+		);
+	}
+
+	void updateEmbeddedFunctionReg(uint8_t reg, uint8_t mask, uint8_t value) {
+		const uint8_t current = m_RegisterInterface.readReg(reg);
+		const uint8_t next = static_cast<uint8_t>((current & ~mask) | (value & mask));
+		m_RegisterInterface.writeReg(reg, next);
+	}
+
+	void enableSflp() {
+		setEmbeddedFunctionBank(true);
+		updateEmbeddedFunctionReg(
+			Regs::EmbFuncEnA::reg,
+			Regs::EmbFuncEnA::maskSflpGame,
+			Regs::EmbFuncEnA::valueSflpGame
+		);
+		updateEmbeddedFunctionReg(
+			Regs::SflpOdr::reg,
+			Regs::SflpOdr::mask,
+			Regs::SflpOdr::value
+		);
+		updateEmbeddedFunctionReg(
+			Regs::EmbFuncFifoEnA::reg,
+			Regs::EmbFuncFifoEnA::maskSflpGame,
+			Regs::EmbFuncFifoEnA::valueSflpGame
+		);
+		setEmbeddedFunctionBank(false);
+	}
 
 	bool initialize() {
 		// Reset and configure the sensor.
@@ -120,6 +203,9 @@ struct LSM6DSV : LSM6DSOutputHandler {
 		m_RegisterInterface.writeReg(Regs::Ctrl3C::reg, Regs::Ctrl3C::value);
 		m_RegisterInterface.writeReg(Regs::Ctrl6GFS::reg, Regs::Ctrl6GFS::value);
 		m_RegisterInterface.writeReg(Regs::Ctrl8XLFS::reg, Regs::Ctrl8XLFS::value);
+		if constexpr (UsesSflp) {
+			enableSflp();
+		}
 		m_RegisterInterface.writeReg(
 			Regs::FifoCtrl3BDR::reg,
 			Regs::FifoCtrl3BDR::value
@@ -136,7 +222,8 @@ struct LSM6DSV : LSM6DSOutputHandler {
 			std::move(callbacks),
 			GyrTs,
 			AccTs,
-			TempTs
+			TempTs,
+			SflpTs
 		);
 	}
 };

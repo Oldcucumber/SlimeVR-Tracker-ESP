@@ -26,9 +26,18 @@
 #include <cstdint>
 #include <functional>
 
+struct SflpGameRotationVector {
+	float x;
+	float y;
+	float z;
+	float w;
+};
+
 template <typename SampleType>
 struct DriverCallbacks {
 	std::function<void(const SampleType sample[3], float AccTs)> processAccelSample;
 	std::function<void(const SampleType sample[3], float GyrTs)> processGyroSample;
 	std::function<void(int16_t sample, float TempTs)> processTempSample;
+	std::function<void(const SflpGameRotationVector& sample, float SflpTs)>
+		processSflpGameRotationSample;
 };

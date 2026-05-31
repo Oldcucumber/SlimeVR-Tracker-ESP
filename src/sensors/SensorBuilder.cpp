@@ -73,6 +73,10 @@ uint8_t SensorBuilder::buildAllSensors() {
 std::unique_ptr<::Sensor>
 SensorBuilder::buildSensorDynamically(SensorTypeID type, SensorDefinition sensorDef) {
 	switch (type) {
+#if ESP8266_LSM6DSV_EXPERIMENT
+		case SensorTypeID::LSM6DSV:
+			return buildSensor<SoftFusionLSM6DSV>(sensorDef);
+#else
 		// case SensorTypeID::MPU9250:
 		//	return buildSensor<MPU9250Sensor>(sensorDef);
 		// case SensorTypeID::BNO080:
@@ -113,9 +117,14 @@ SensorBuilder::buildSensorDynamically(SensorTypeID type, SensorDefinition sensor
 		//	return buildSensor<SoftFusionICM45605>(
 		//		sensorDef
 		//	);
+#endif
 		default:
 			m_Manager->m_Logger.error(
+#if ESP8266_LSM6DSV_EXPERIMENT
+				"ESP8266 LSM6DSV experiment branch only supports LSM6DSV, got %s (%d)",
+#else
 				"Unable to create sensor with type %s (%d)",
+#endif
 				getIMUNameByType(type),
 				static_cast<int>(type)
 			);

@@ -25,6 +25,56 @@
 3. 性能优先时，当前 LSM6DSV 采样率对 100 Hz 输出有余量。进一步优化应先减少网络抖动和 FIFO backlog，而不是盲目提高 ODR。
 4. 最大潜力但风险最高的方向是接入 LSM6DSV 的 SFLP/传感器侧融合，让 IMU 输出 quaternion 来降低 ESP8266 CPU 负担；这会触碰协议、校准和融合行为，适合独立实验分支。
 
+## 算法优化可能性
+
+ESP8266 的 Xtensa L106 没有硬件浮点单元，因此算法优化不能只看 ODR 和循环次数。`float` 乘加、`sqrt`、`sin`、`cos`、矩阵求逆都会走软件实现，`double` 更应避免进入高频路径。当前代码已经通过 `sensor_real_t=float` 和 `VQF_SINGLE_PRECISION` 使用单精度；下一步的收益主要来自减少浮点调用次数、减少矩阵路径、减少 libm 三角函数，而不是提高到双精度。
+
+当前 LSM6DSV 算法链路：
+
+- `src/sensors/softfusion/drivers/lsm6dsv.h`: gyro 240 Hz、accel 120 Hz、temperature 60 Hz。
+- `src/sensors/softfusion/softfusionsensor.h`: FIFO 读取后每条 gyro/accel sample 都进入 `SensorFusion`，100 Hz 发送姿态和线性加速度。
+- `src/sensors/SensorFusion.cpp`: gyro 调用 `VQF::updateGyr(Gxyz, deltat)`，accel 调用 `VQF::updateAcc(Axyz)`。
+- `lib/vqf/vqf.cpp`: 当前是完整 VQF；LSM6DSV 没有磁力计，所以通常只输出 6D quaternion。
+
+主要热点：
+
+- `VQF::updateGyr`: 每个 gyro sample 做 norm/sqrt、`sin`、`cos`、quaternion multiply、normalize。240 Hz 下这条路径稳定触发。
+- `VQF::updateAcc`: 每个 accel sample 做 rest detection、两次 quaternion rotate、Butterworth filter、normalize、sqrt、acc correction，并默认执行 motion/rest gyro bias Kalman 更新。
+- motion bias 更新是当前最重的 accel 子路径：旋转矩阵构造、9 维低通、3x3 矩阵乘法、3x3 求逆、协方差更新。ESP8266 无 FPU 时，这部分成本会被放大。
+
+Gyro 优化尤其不能只看数学形式是否“更简单”。它处在 240 Hz 高频路径上，且 ESP8266 没有 FPU；如果为了替代 `sin/cos` 引入额外 norm、分支、多项式高阶项、动态阈值或更频繁的误差修正，计算量可能反向上升。所有 gyro-path 改动都应先做最小实现和实机计时，再看姿态误差。
+
+### 同等或接近精度下更快
+
+| 方向 | 建议 | 预期收益 | 精度/行为风险 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 关闭运动中 bias Kalman | 用 `-DVQF_NO_MOTION_BIAS_ESTIMATION` 做 ESP8266 fast profile，保留 rest detection 和静止 bias 估计 | 去掉 3x3 矩阵和运动 bias 低通状态；本地主机相对 benchmark 约为完整 VQF 的 40% 运行时间，VQF 对象也更小 | 运动中不能继续估计 gyro bias；长时间持续运动、温升或开机未充分静止时 yaw/pitch/roll 漂移可能增加 | 高 |
+| 运行时关闭 motion bias | 设置 `motionBiasEstEnabled=false`，`restBiasEstEnabled=true` | 可做 A/B 测试，不需要改 VQF 类型 | 编译出的矩阵代码仍存在，且当前实现仍会执行部分 R/biasLp 低通准备，CPU 收益小于编译期宏 | 中 |
+| 小角度 gyro 积分 | 在 `updateGyr` 中对 `angle/2` 使用低阶 `sinc/cos` 近似，超过阈值再回退 `sin/cos` | 理论上减少 240 Hz 高频 libm 调用；1000 dps、240 Hz 时 `angle/2` 约 0.036 rad，适合小角度近似 | 额外分支/多项式也会走软件浮点，可能反向变慢；需要实机计时、离线轨迹对比和长时间 drift 测试 | 中到低 |
+| 降低 normalize 频率 | gyro quaternion 每 N 次归一化，或用一阶归一化修正 | 减少 `sqrt`/除法 | 数值漂移风险；必须做静止长测和快速旋转回放 | 中到低 |
+| accel 更新降频 | gyro 仍 240 Hz，accel correction 从 120 Hz 试到 60 Hz | 减少 `updateAcc` 和 bias/rest 计算 | 俯仰/横滚修正滞后增加，动态加速度下的误差变化需要实测 | 中到低 |
+| `BasicVQF` 替代 | 仅作为实验，不建议直接上 ESP8266 profile | 代码更小，算法功能更少 | 当前 `BasicVQF` 的 filter coeff/state 使用 `double`，ESP8266 无 FPU 下可能比预期慢；且没有 rest detection/bias estimation，会影响 runtime calibration 依赖的 `getRestDetected()` | 低 |
+
+低风险首选是 `VQF_NO_MOTION_BIAS_ESTIMATION`。它不是“无损”，但在 tracker 已有静止/runtime calibration、且用户会在开机或使用中静止校准的前提下，行为变化比换成 BasicVQF 或改积分公式小得多。建议先作为编译 profile 和 GitHub Action 输入暴露，而不是替换默认算法。
+
+本地 `g++ -O2` 只做了相对排序参考，不能代表 ESP8266 绝对耗时：完整 VQF 约 20-21 ms，`VQF_NO_MOTION_BIAS_ESTIMATION` 约 8-9 ms，`BasicVQF` 约 8-10 ms，对同一组合成数据处理 240000 个 gyro 和 120000 个 accel sample。由于主机有硬件浮点和硬件 double，这个结果低估了 ESP8266 上软件浮点的代价；尤其不能据此判断当前 `BasicVQF` 在 ESP8266 上一定更快。
+
+### 更精准但更重
+
+| 方向 | 建议 | 精度收益 | 成本/风险 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 修正温度 bias 动态调整 | 检查并修复 `VQF::updateBiasForgettingTime(float)` 未使用传入参数的问题 | 温度梯度校准开启时，VQF bias covariance 才会按温升/降温速度动态调整 | 行为会改变，且该 toggle 默认关闭；需要温升场景 A/B | 高 |
+| 使用校准后的 timestep | `SensorFusion::updateAcc(..., deltat)` 当前没有把 `deltat` 传进 VQF filter；gyro rest filter 也仍用构造时 `gyrTs` | 实际采样率偏离名义值时，acc low-pass、rest detection、bias 更新的时间常数更准确 | VQF 需要支持更新 sampling time 并平滑迁移 filter state；直接重建会造成姿态跳变 | 高 |
+| LSM6DSV 专用 VQF 参数 | 对 `tauAcc`、`restMinT`、`restThGyr`、`restThAcc`、`biasSigma*` 做数据驱动调参 | 可能降低静止漂移和动态误修正 | 需要采集静止、快转、佩戴运动、温升数据；只凭体感调参容易过拟合 | 中 |
+| 连续温度 bias 模型 | 利用 runtime calibration 的两点 gyro 温度数据，对 gyro offset 做按温度插值/外推 | 可比只改 forgetting time 更直接地抵消温漂 | 两点模型对非线性温漂有限，外推可能误补偿；需要限制温区和斜率 | 中 |
+| LSM6DSV SFLP | 让 IMU 输出 sensor-side quaternion，与 soft VQF 做对比 | 可能同时降低 ESP8266 CPU 并获得稳定低功耗融合 | 坐标系、延迟、校准、协议、精度都要重新验证；适合独立实验分支 | 中到低 |
+| EKF/UKF | 不建议在 ESP8266 上作为主线 | 理论上可融合更完整噪声模型 | 无 FPU 下成本高；6D 无磁力计时 yaw 仍不可观测，无法靠滤波器本身消除 yaw 漂移 | 低 |
+
+两个值得优先确认的现有行为：
+
+- `SensorFusion::updateAcc()` 接收 `deltat` 但没有使用；`updateMag()` 也类似。当前 `processAccelSample()` 传入的 `calibrator.getAccelTimestep()` 实际没有影响 VQF 的 accel filter。
+- `VQF::updateBiasForgettingTime(float biasForgettingTime)` 函数体使用的是 `params.biasForgettingTime`，不是传入的 `biasForgettingTime`。这会削弱 `TempGradientCalculator` 对温度变化的作用。
+
 ## 可优化项与取舍
 
 | 方向 | 建议 | 收益 | 代价/风险 | 优先级 |
@@ -34,6 +84,7 @@
 | I2C 可靠性 | 默认保持 400 kHz；若出现超时、FIFO overrun、姿态卡顿，先检查上拉/线长/地线，再用 `-DESP8266_I2C_SPEED=100000` 回退诊断 | 400 kHz 降低 bus time，适合 FIFO burst | 降速会增加每 10 ms 内 I2C 占用；过弱上拉在 400 kHz 下更容易出错 | 高 |
 | Wi-Fi 电源策略 | `POWER_SAVING_MINIMUM` 只作为实测选项；`MODERATE`/`MAXIMUM` 不建议用于低延迟 tracker | 可能降低平均电流 | 会增加延迟、丢包、发现服务器失败或数据暂停风险；代码已标注问题 | 中 |
 | RF 输出功率 | 在强信号场景小步降低输出功率，记录 RSSI、丢包和体感延迟 | 降低 TX 峰值和热量 | 信号边缘会更不稳定；人体遮挡时更明显 | 中 |
+| VQF fast profile | 测试 `-DVQF_NO_MOTION_BIAS_ESTIMATION`，保留静止 bias/rest detection | 降低 ESP8266 软件浮点压力和 flash/RAM 占用 | 持续运动和温升时 bias 跟踪弱于完整 VQF | 中 |
 | Packet/数据内容 | 保持 buffered bundling；功耗模式可测试关闭 `SEND_ACCELERATION`；telemetry 默认关闭，需要 `-DENABLE_TELEMETRY=1` 显式启用 | 减少 UDP 包和 CPU/射频活动 | 失去线性加速度或诊断能力；telemetry 开启会增加网络流量和日志泄露面 | 中 |
 | IMU ODR 降档 | 实验 120 Hz gyro / 60 或 120 Hz accel 的 profile | 降低 I2C、融合计算和传感器功耗 | 快速动作相位裕量下降，VQF timestep/校准必须同步；可能增大延迟和漂移 | 中 |
 | LSM6DSV SFLP | 研究读取 sensor-fusion low-power quaternion，作为 soft-fusion 的替代输入 | 最大 CPU 省电潜力，可能降低 ESP8266 负载 | 集成复杂，需重做校准、坐标、协议和精度验证；不要直接替换稳定路径 | 低到中 |
@@ -82,6 +133,10 @@ platformio run -e BOARD_WEMOSD1MINI
 SLIMEVR_EXTRA_BUILD_FLAGS="-DESP8266_I2C_SPEED=100000" \
   platformio run -e BOARD_WEMOSD1MINI
 
+# VQF fast profile：保留静止 bias，关闭运动中 bias 3x3 Kalman
+SLIMEVR_EXTRA_BUILD_FLAGS="-DVQF_NO_MOTION_BIAS_ESTIMATION" \
+  platformio run -e BOARD_WEMOSD1MINI
+
 # telemetry 单播到诊断机器；日志也会转发
 SLIMEVR_EXTRA_BUILD_FLAGS="-DENABLE_TELEMETRY=1 -DTELEMETRY_HOST=\\\"192.168.1.10\\\"" \
   platformio run -e BOARD_WEMOSD1MINI
@@ -117,8 +172,10 @@ Espressif 在 ESP8266EX 数据手册中已把该芯片标为 not recommended for
 2. 调大 `MaxFifoReadings` 到 24/32，并在 ESP8266 上做长时间稳定性测试。
 3. 做供电与 I2C 硬件检查：3.3 V 跌落、上拉阻值、线长、地回路、IMU 与 ESP 热距离。
 4. 仅在稳定基线通过后，测试 `POWER_SAVING_MINIMUM` 与 RF 输出功率降低。
-5. 再做 ODR 降档 profile。
-6. 最后考虑 SFLP 替代 soft-fusion。
+5. 测试 `VQF_NO_MOTION_BIAS_ESTIMATION` fast profile，并记录静止漂移、持续运动后回正、温升过程中的 bias 行为。
+6. 修正并验证 timestep/温度 bias 相关的现有行为。
+7. 再做 ODR 降档 profile。
+8. 最后考虑 SFLP 替代 soft-fusion。
 
 ## 外部资料
 

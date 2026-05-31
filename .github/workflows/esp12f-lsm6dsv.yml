@@ -7,6 +7,27 @@ on:
         description: "ESP8266 I2C speed in Hz"
         required: true
         default: "400000"
+      fusion_mode:
+        description: "Experimental fusion profile for ESP12F + LSM6DSV"
+        required: true
+        type: choice
+        default: "sflp"
+        options:
+          - sflp
+          - vqf_fast
+          - vqf_full
+      sflp_odr_hz:
+        description: "SFLP ODR in Hz; used only when fusion_mode=sflp"
+        required: true
+        type: choice
+        default: "120"
+        options:
+          - "15"
+          - "30"
+          - "60"
+          - "120"
+          - "240"
+          - "480"
       enable_telemetry:
         description: "Enable UDP telemetry"
         required: true
@@ -66,7 +87,24 @@ jobs:
             {"SENSORS":[{"protocol":"I2C","imu":"IMU_LSM6DSV","int":"13","rotation":"DEG_270","scl":"12","sda":"14"}],"BATTERY":{"type":"BAT_EXTERNAL","r1":100,"r2":220,"shieldR":180,"pin":"A0"},"LED":{"LED_PIN":"2","LED_INVERTED":true}}
         run: |
           mkdir -p build
-          pio_build_flags="-DESP8266_I2C_SPEED=${{ inputs.i2c_speed }}"
+          pio_build_flags="-DESP8266_LSM6DSV_EXPERIMENT=1 -DESP8266_I2C_SPEED=${{ inputs.i2c_speed }}"
+
+          case "${{ inputs.fusion_mode }}" in
+            sflp)
+              pio_build_flags="$pio_build_flags -DLSM6DSV_SFLP_EXPERIMENT=1"
+              pio_build_flags="$pio_build_flags -DLSM6DSV_SFLP_ODR_HZ=${{ inputs.sflp_odr_hz }}"
+              pio_build_flags="$pio_build_flags -DSEND_ACCELERATION=0"
+              ;;
+            vqf_fast)
+              pio_build_flags="$pio_build_flags -DVQF_NO_MOTION_BIAS_ESTIMATION"
+              ;;
+            vqf_full)
+              ;;
+            *)
+              echo "::error::Unsupported fusion_mode '${{ inputs.fusion_mode }}'"
+              exit 1
+              ;;
+          esac
 
           if [ "${{ inputs.enable_telemetry }}" = "true" ]; then
             pio_build_flags="$pio_build_flags -DENABLE_TELEMETRY=1"

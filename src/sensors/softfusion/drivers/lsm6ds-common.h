@@ -25,7 +25,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 
 #include "../../../sensorinterface/RegisterInterface.h"
 #include "callbacks.h"
@@ -54,12 +56,64 @@ struct LSM6DSOutputHandler {
 
 	static constexpr size_t FullFifoEntrySize = sizeof(FifoEntryAligned) + 1;
 
+	static float halfToFloat(uint16_t half) {
+		const uint32_t sign = static_cast<uint32_t>(half & 0x8000U) << 16U;
+		const uint32_t exponent = (half >> 10U) & 0x1FU;
+		const uint32_t fraction = half & 0x03FFU;
+
+		uint32_t bits;
+		if (exponent == 0U) {
+			if (fraction == 0U) {
+				bits = sign;
+			} else {
+				uint32_t normalizedFraction = fraction << 1U;
+				uint32_t normalizedExponent = 0U;
+				while ((normalizedFraction & 0x0400U) == 0U) {
+					normalizedFraction <<= 1U;
+					normalizedExponent++;
+				}
+				normalizedFraction &= 0x03FFU;
+				bits = sign
+					 | ((127U - 15U - normalizedExponent) << 23U)
+					 | (normalizedFraction << 13U);
+			}
+		} else if (exponent == 0x1FU) {
+			bits = sign | 0x7F800000U | (fraction << 13U);
+		} else {
+			bits = sign | ((exponent + (127U - 15U)) << 23U) | (fraction << 13U);
+		}
+
+		float out;
+		std::memcpy(&out, &bits, sizeof(out));
+		return out;
+	}
+
+	static uint16_t readLe16(const uint8_t* data) {
+		return static_cast<uint16_t>(data[0])
+			 | (static_cast<uint16_t>(data[1]) << 8U);
+	}
+
+	static SflpGameRotationVector decodeSflpGameRotation(const FifoEntryAligned& entry) {
+		const float x = halfToFloat(readLe16(&entry.raw[0]));
+		const float y = halfToFloat(readLe16(&entry.raw[2]));
+		const float z = halfToFloat(readLe16(&entry.raw[4]));
+		const float ww = std::max(0.0f, 1.0f - x * x - y * y - z * z);
+
+		return SflpGameRotationVector{
+			.x = x,
+			.y = y,
+			.z = z,
+			.w = std::sqrt(ww),
+		};
+	}
+
 	template <typename Regs, size_t MaxReadings = 8>
 	bool bulkRead(
 		DriverCallbacks<int16_t>&& callbacks,
 		float GyrTs,
 		float AccTs,
-		float TempTs
+		float TempTs,
+		float SflpTs = 0.0f
 	) {
 		constexpr auto FIFO_SAMPLES_MASK = 0x3ff;
 		constexpr auto FIFO_OVERRUN_LATCHED_MASK = 0x800;
@@ -100,6 +154,14 @@ struct LSM6DSOutputHandler {
 					break;
 				case 0x03:  // Temperature
 					callbacks.processTempSample(entry.xyz[0], TempTs);
+					break;
+				case 0x13:  // SFLP game rotation vector
+					if (callbacks.processSflpGameRotationSample) {
+						callbacks.processSflpGameRotationSample(
+							decodeSflpGameRotation(entry),
+							SflpTs
+						);
+					}
 					break;
 			}
 		}

@@ -25,6 +25,8 @@
 
 #include <PinInterface.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -44,6 +46,13 @@ template <typename SensorType, template <typename IMU> typename Calibrator>
 class SoftFusionSensor : public Sensor {
 	using Consts = IMUConsts<SensorType>;
 	using RawSensorT = typename Consts::RawSensorT;
+	static constexpr bool UsesSflp = []() constexpr {
+		if constexpr (requires { SensorType::UsesSflp; }) {
+			return SensorType::UsesSflp;
+		} else {
+			return false;
+		}
+	}();
 
 	using Calib = Calibrator<SensorType>;
 	static constexpr auto UpsideDownCalibrationInit = Calib::HasUpsideDownCalibration;
@@ -112,6 +121,14 @@ class SoftFusionSensor : public Sensor {
 			   static_cast<sensor_real_t>(xyz[1]),
 			   static_cast<sensor_real_t>(xyz[2])};
 
+		if constexpr (UsesSflp) {
+			accelData[0] *= Consts::AScale;
+			accelData[1] *= Consts::AScale;
+			accelData[2] *= Consts::AScale;
+			updateSflpLinearAcceleration(accelData);
+			return;
+		}
+
 		calibrator.scaleAccelSample(accelData);
 
 		m_fusion.updateAcc(accelData, calibrator.getAccelTimestep());
@@ -120,6 +137,10 @@ class SoftFusionSensor : public Sensor {
 	}
 
 	void processGyroSample(const RawSensorT xyz[3], const sensor_real_t timeDelta) {
+		if constexpr (UsesSflp) {
+			return;
+		}
+
 		sensor_real_t gyroData[]
 			= {static_cast<sensor_real_t>(xyz[0]),
 			   static_cast<sensor_real_t>(xyz[1]),
@@ -130,8 +151,45 @@ class SoftFusionSensor : public Sensor {
 		calibrator.provideGyroSample(xyz);
 	}
 
-	void
-	processTempSample(const int16_t rawTemperature, const sensor_real_t timeDelta) {
+	void processSflpGameRotationSample(
+		const SflpGameRotationVector& sample,
+		const sensor_real_t timeDelta
+	) {
+		if constexpr (!UsesSflp) {
+			return;
+		}
+
+		sflpQwxyz[0] = sample.w;
+		sflpQwxyz[1] = sample.x;
+		sflpQwxyz[2] = sample.y;
+		sflpQwxyz[3] = sample.z;
+		sflpUpdated = true;
+		gravityReady = false;
+		linaccelReady = false;
+	}
+
+	void updateSflpLinearAcceleration(const sensor_real_t accelData[3]) {
+		std::copy(accelData, accelData + 3, sflpLastAccel);
+		linaccelReady = false;
+	}
+
+	Quat getSflpQuaternionQuat() {
+		return Quat(sflpQwxyz[1], sflpQwxyz[2], sflpQwxyz[3], sflpQwxyz[0]);
+	}
+
+	Vector3 getSflpLinearAccVec() {
+		if (!linaccelReady) {
+			if (!gravityReady) {
+				SensorFusion::calcGravityVec(sflpQwxyz, sflpGravity);
+				gravityReady = true;
+			}
+			SensorFusion::calcLinearAcc(sflpLastAccel, sflpGravity, sflpLinearAcc);
+			linaccelReady = true;
+		}
+		return Vector3(sflpLinearAcc[0], sflpLinearAcc[1], sflpLinearAcc[2]);
+	}
+
+	void processTempSample(const int16_t rawTemperature, const sensor_real_t timeDelta) {
 		if constexpr (!Consts::DirectTempReadOnly) {
 			const float scaledTemperature
 				= SensorType::TemperatureBias
@@ -139,14 +197,16 @@ class SoftFusionSensor : public Sensor {
 					  * (1.0 / SensorType::TemperatureSensitivity);
 
 			lastReadTemperature = scaledTemperature;
-			if (toggles.getToggle(SensorToggles::TempGradientCalibrationEnabled)) {
-				tempGradientCalculator.feedSample(
-					lastReadTemperature,
-					calibrator.getTempTimestep()
-				);
-			}
+			if constexpr (!UsesSflp) {
+				if (toggles.getToggle(SensorToggles::TempGradientCalibrationEnabled)) {
+					tempGradientCalculator.feedSample(
+						lastReadTemperature,
+						calibrator.getTempTimestep()
+					);
+				}
 
-			calibrator.provideTempSample(lastReadTemperature);
+				calibrator.provideTempSample(lastReadTemperature);
+			}
 		}
 	}
 
@@ -200,7 +260,9 @@ public:
 	}
 
 	void motionLoop() final {
-		calibrator.tick();
+		if constexpr (!UsesSflp) {
+			calibrator.tick();
+		}
 
 		// read fifo updating fusion
 		uint32_t now = micros();
@@ -214,19 +276,23 @@ public:
 					   - static_cast<uint32_t>(Consts::DirectTempReadTs * 1e6));
 				lastReadTemperature = m_sensor.getDirectTemp();
 
-				calibrator.provideTempSample(lastReadTemperature);
+				if constexpr (!UsesSflp) {
+					calibrator.provideTempSample(lastReadTemperature);
 
-				if (toggles.getToggle(SensorToggles::TempGradientCalibrationEnabled)) {
-					tempGradientCalculator.feedSample(
-						lastReadTemperature,
-						Consts::DirectTempReadTs
-					);
+					if (toggles.getToggle(SensorToggles::TempGradientCalibrationEnabled)) {
+						tempGradientCalculator.feedSample(
+							lastReadTemperature,
+							Consts::DirectTempReadTs
+						);
+					}
 				}
 			}
 		}
 
-		if (toggles.getToggle(SensorToggles::TempGradientCalibrationEnabled)) {
-			tempGradientCalculator.tick();
+		if constexpr (!UsesSflp) {
+			if (toggles.getToggle(SensorToggles::TempGradientCalibrationEnabled)) {
+				tempGradientCalculator.tick();
+			}
 		}
 
 		// send new fusion values when time is up
@@ -245,27 +311,50 @@ public:
 				[&](int16_t sample, float TempTs) {
 					processTempSample(sample, TempTs);
 				},
+				[&](const SflpGameRotationVector& sample, float SflpTs) {
+					processSflpGameRotationSample(sample, SflpTs);
+				},
 			});
 			if (overwhelmed) {
-				calibrator.signalOverwhelmed();
+				if constexpr (!UsesSflp) {
+					calibrator.signalOverwhelmed();
+				}
 			}
-			if (!m_fusion.isUpdated()) {
+			const bool fusionUpdated = UsesSflp ? sflpUpdated : m_fusion.isUpdated();
+			if (!fusionUpdated) {
 				checkSensorTimeout();
 				return;
 			}
 			hadData = true;
 			m_lastRotationUpdateMillis = millis();
-			m_fusion.clearUpdated();
+			if constexpr (UsesSflp) {
+				sflpUpdated = false;
+			} else {
+				m_fusion.clearUpdated();
+			}
 
 			m_lastRotationPacketSent = now - (elapsed - sendInterval);
 
-			setFusedRotation(m_fusion.getQuaternionQuat());
-			setAcceleration(m_fusion.getLinearAccVec());
+			if constexpr (UsesSflp) {
+				setFusedRotation(getSflpQuaternionQuat());
+			} else {
+				setFusedRotation(m_fusion.getQuaternionQuat());
+			}
+
+#if SEND_ACCELERATION
+			if constexpr (UsesSflp) {
+				setAcceleration(getSflpLinearAccVec());
+			} else {
+				setAcceleration(m_fusion.getLinearAccVec());
+			}
+#endif
 			optimistic_yield(100);
 		}
 
-		if (calibrationDetector.update(m_fusion)) {
-			markRestCalibrationComplete();
+		if constexpr (!UsesSflp) {
+			if (calibrationDetector.update(m_fusion)) {
+				markRestCalibrationComplete();
+			}
 		}
 	}
 
@@ -275,34 +364,37 @@ public:
 			return;
 		}
 
-		SlimeVR::Configuration::SensorConfig sensorCalibration
-			= configuration.getSensor(sensorId);
-
 		toggles = configuration.getSensorToggles(sensorId);
 
-		// If no compatible calibration data is found, the calibration data will just be
-		// zero-ed out
-		if (calibrator.calibrationMatches(sensorCalibration)) {
-			calibrator.assignCalibration(sensorCalibration);
-		} else if (sensorCalibration.type == SlimeVR::Configuration::SensorConfigType::NONE) {
-			m_Logger.warn(
-				"No calibration data found for sensor %d, ignoring...",
-				sensorId
-			);
-			m_Logger.info("Calibration is advised");
-		} else {
-			m_Logger.warn(
-				"Incompatible calibration data found for sensor %d, ignoring...",
-				sensorId
-			);
-			m_Logger.info("Please recalibrate");
-		}
+		if constexpr (!UsesSflp) {
+			SlimeVR::Configuration::SensorConfig sensorCalibration
+				= configuration.getSensor(sensorId);
 
-		calibrator.begin();
+			// If no compatible calibration data is found, the calibration data will just be
+			// zero-ed out
+			if (calibrator.calibrationMatches(sensorCalibration)) {
+				calibrator.assignCalibration(sensorCalibration);
+			} else if (sensorCalibration.type
+					   == SlimeVR::Configuration::SensorConfigType::NONE) {
+				m_Logger.warn(
+					"No calibration data found for sensor %d, ignoring...",
+					sensorId
+				);
+				m_Logger.info("Calibration is advised");
+			} else {
+				m_Logger.warn(
+					"Incompatible calibration data found for sensor %d, ignoring...",
+					sensorId
+				);
+				m_Logger.info("Please recalibrate");
+			}
+
+			calibrator.begin();
+		}
 
 		bool initResult = false;
 
-		if constexpr (Calib::HasMotionlessCalib) {
+		if constexpr (!UsesSflp && Calib::HasMotionlessCalib) {
 			typename SensorType::MotionlessCalibrationData calibData;
 			std::memcpy(
 				&calibData,
@@ -323,7 +415,9 @@ public:
 		m_status = SensorStatus::SENSOR_OK;
 		working = true;
 
-		calibrator.checkStartupCalibration();
+		if constexpr (!UsesSflp) {
+			calibrator.checkStartupCalibration();
+		}
 
 		if constexpr (Consts::SupportsMags) {
 			magDriver.init(
@@ -358,10 +452,18 @@ public:
 	}
 
 	void startCalibration(int calibrationType) final {
-		calibrator.startCalibration(calibrationType);
+		if constexpr (UsesSflp) {
+			m_Logger.warn("SFLP experiment uses sensor-side fusion; calibration is disabled");
+		} else {
+			calibrator.startCalibration(calibrationType);
+		}
 	}
 
 	[[nodiscard]] bool isFlagSupported(SensorToggles toggle) const final {
+		if constexpr (UsesSflp) {
+			return false;
+		}
+
 		return toggle == SensorToggles::CalibrationEnabled
 			|| toggle == SensorToggles::TempGradientCalibrationEnabled;
 	}
@@ -371,6 +473,13 @@ public:
 	SensorFusion m_fusion;
 	SensorType m_sensor;
 	Calib calibrator{m_fusion, m_sensor, sensorId, m_Logger, toggles};
+	bool sflpUpdated = false;
+	bool gravityReady = false;
+	bool linaccelReady = false;
+	sensor_real_t sflpQwxyz[4]{1.0f, 0.0f, 0.0f, 0.0f};
+	sensor_real_t sflpLastAccel[3]{0.0f, 0.0f, CONST_EARTH_GRAVITY};
+	sensor_real_t sflpGravity[3]{0.0f, 0.0f, 1.0f};
+	sensor_real_t sflpLinearAcc[3]{0.0f, 0.0f, 0.0f};
 
 	SensorStatus m_status = SensorStatus::SENSOR_OFFLINE;
 	uint32_t m_lastRotationUpdateMillis = 0;
