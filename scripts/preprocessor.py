@@ -1,6 +1,7 @@
 import json
 import re
 import os
+import shlex
 from pathlib import Path
 from typing import Union, Optional, Dict, Any, List
 
@@ -206,5 +207,11 @@ if slime_board:
     separator = '\n  '
     print(f">>> Appending build flags:\n  {separator.join(output_flags)}")
     env.Append(BUILD_FLAGS=output_flags)
+
+    extra_flags = os.environ.get("SLIMEVR_EXTRA_BUILD_FLAGS", "")
+    if extra_flags:
+        parsed_extra_flags = shlex.split(extra_flags)
+        print(f">>> Appending extra build flags:\n  {separator.join(parsed_extra_flags)}")
+        env.Append(BUILD_FLAGS=parsed_extra_flags)
 else:
     print(">>> custom_slime_board not set - skipping")

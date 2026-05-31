@@ -1,6 +1,9 @@
 #include "Logger.h"
 
+#include "debug.h"
+#if ENABLE_TELEMETRY && ENABLE_TELEMETRY_LOGS
 #include "telemetry/TelemetryService.h"
+#endif
 
 namespace SlimeVR::Logging {
 void Logger::setTag(const char* tag) {
@@ -66,6 +69,8 @@ void Logger::log(Level level, const char* format, va_list args) const {
 	}
 
 	Serial.printf("[%-5s] [%s] %s\n", levelToString(level), buf, buffer);
+#if ENABLE_TELEMETRY && ENABLE_TELEMETRY_LOGS
 	Telemetry::TelemetryService::writeLog(level, m_Prefix, m_Tag, buffer);
+#endif
 }
 }  // namespace SlimeVR::Logging

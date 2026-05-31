@@ -33,7 +33,10 @@
 #include "sensors/SensorManager.h"
 #include "status/LEDManager.h"
 #include "status/StatusManager.h"
+#include "debug.h"
+#if ENABLE_TELEMETRY
 #include "telemetry/TelemetryService.h"
+#endif
 
 extern Timer<> globalTimer;
 extern SlimeVR::LEDManager ledManager;
@@ -45,4 +48,6 @@ extern SlimeVR::Network::Connection networkConnection;
 extern BatteryMonitor battery;
 extern SlimeVR::WiFiNetwork wifiNetwork;
 extern SlimeVR::WifiProvisioning wifiProvisioning;
+#if ENABLE_TELEMETRY
 extern SlimeVR::Telemetry::TelemetryService telemetryService;
+#endif

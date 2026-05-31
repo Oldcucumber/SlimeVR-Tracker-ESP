@@ -7,6 +7,8 @@
 #include "debug.h"
 #include "logging/Level.h"
 
+#if ENABLE_TELEMETRY
+
 namespace SlimeVR::Telemetry {
 
 class TelemetryService {
@@ -38,9 +40,9 @@ private:
 	static TelemetryService* s_Instance;
 
 	WiFiUDP m_UDP;
-	IPAddress m_Host = IPAddress(255, 255, 255, 255);
+	IPAddress m_Host = IPAddress(0, 0, 0, 0);
 	uint16_t m_Port = TELEMETRY_PORT;
-	bool m_Enabled = ENABLE_TELEMETRY;
+	bool m_Enabled = true;
 
 	uint32_t m_LastPerformanceSend = 0;
 	uint32_t m_LoopStartMicros = 0;
@@ -50,5 +52,7 @@ private:
 };
 
 }  // namespace SlimeVR::Telemetry
+
+#endif  // ENABLE_TELEMETRY
 
 #endif  // SLIMEVR_TELEMETRY_TELEMETRYSERVICE_H_

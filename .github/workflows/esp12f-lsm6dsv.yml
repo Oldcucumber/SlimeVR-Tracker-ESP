@@ -2,6 +2,34 @@ name: ESP12F LSM6DSV Build
 
 on:
   workflow_dispatch:
+    inputs:
+      i2c_speed:
+        description: "ESP8266 I2C speed in Hz"
+        required: true
+        default: "400000"
+      enable_telemetry:
+        description: "Enable UDP telemetry"
+        required: true
+        type: boolean
+        default: false
+      telemetry_host:
+        description: "Telemetry receiver IP; leave empty unless telemetry is enabled"
+        required: false
+        default: ""
+      telemetry_broadcast:
+        description: "Allow telemetry broadcast when telemetry_host is empty"
+        required: true
+        type: boolean
+        default: false
+      telemetry_logs:
+        description: "Forward firmware logs through telemetry"
+        required: true
+        type: boolean
+        default: true
+      telemetry_interval_ms:
+        description: "Telemetry performance interval in milliseconds"
+        required: true
+        default: "1000"
 
 jobs:
   build:
@@ -38,6 +66,27 @@ jobs:
             {"SENSORS":[{"protocol":"I2C","imu":"IMU_LSM6DSV","int":"13","rotation":"DEG_270","scl":"12","sda":"14"}],"BATTERY":{"type":"BAT_EXTERNAL","r1":100,"r2":220,"shieldR":180,"pin":"A0"},"LED":{"LED_PIN":"2","LED_INVERTED":true}}
         run: |
           mkdir -p build
+          pio_build_flags="-DESP8266_I2C_SPEED=${{ inputs.i2c_speed }}"
+
+          if [ "${{ inputs.enable_telemetry }}" = "true" ]; then
+            pio_build_flags="$pio_build_flags -DENABLE_TELEMETRY=1"
+            pio_build_flags="$pio_build_flags -DTELEMETRY_INTERVAL_MS=${{ inputs.telemetry_interval_ms }}"
+
+            if [ "${{ inputs.telemetry_logs }}" = "false" ]; then
+              pio_build_flags="$pio_build_flags -DENABLE_TELEMETRY_LOGS=0"
+            fi
+
+            telemetry_host="${{ inputs.telemetry_host }}"
+            if [ -n "$telemetry_host" ]; then
+              pio_build_flags="$pio_build_flags -DTELEMETRY_HOST=\\\"$telemetry_host\\\""
+            elif [ "${{ inputs.telemetry_broadcast }}" = "true" ]; then
+              pio_build_flags="$pio_build_flags -DTELEMETRY_BROADCAST=1"
+            fi
+          fi
+
+          export SLIMEVR_EXTRA_BUILD_FLAGS="$pio_build_flags"
+          echo "SLIMEVR_EXTRA_BUILD_FLAGS=$SLIMEVR_EXTRA_BUILD_FLAGS"
+
           echo "::group::PlatformIO build output"
           set +e
           platformio run -e BOARD_WEMOSD1MINI 2>&1 | tee build/platformio.log

@@ -4,6 +4,8 @@
 #include "debug.h"
 #include "logging/Level.h"
 
+#if ENABLE_TELEMETRY
+
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
 #elif defined(ESP32)
@@ -18,7 +20,13 @@ TelemetryService::TelemetryService() { s_Instance = this; }
 
 void TelemetryService::setup() {
 #ifdef TELEMETRY_HOST
-	m_Host.fromString(TELEMETRY_HOST);
+	if (!m_Host.fromString(TELEMETRY_HOST)) {
+		m_Enabled = false;
+	}
+#elif TELEMETRY_BROADCAST
+	m_Host = IPAddress(255, 255, 255, 255);
+#else
+	m_Enabled = false;
 #endif
 }
 
@@ -139,3 +147,5 @@ void TelemetryService::sendLine(const char* line) {
 }
 
 }  // namespace SlimeVR::Telemetry
+
+#endif  // ENABLE_TELEMETRY

@@ -84,7 +84,17 @@
 // Experimental
 #define OPTIMIZE_UPDATES true
 
+#ifndef ESP8266_I2C_SPEED
+#define ESP8266_I2C_SPEED 400000
+#endif
+
+#ifndef I2C_SPEED
+#if ESP8266
+#define I2C_SPEED ESP8266_I2C_SPEED
+#else
 #define I2C_SPEED 400000
+#endif
+#endif
 
 #define COMPLIANCE_MODE true
 #define USE_ATTENUATION COMPLIANCE_MODE&& ESP8266
@@ -113,7 +123,15 @@
 #endif
 
 #ifndef ENABLE_TELEMETRY
-#define ENABLE_TELEMETRY true
+#define ENABLE_TELEMETRY 0
+#endif
+
+#ifndef ENABLE_TELEMETRY_LOGS
+#define ENABLE_TELEMETRY_LOGS ENABLE_TELEMETRY
+#endif
+
+#ifndef TELEMETRY_BROADCAST
+#define TELEMETRY_BROADCAST 0
 #endif
 
 #ifndef TELEMETRY_PORT

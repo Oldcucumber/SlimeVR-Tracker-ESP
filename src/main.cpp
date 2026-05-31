@@ -33,10 +33,14 @@
 #include "ota.h"
 #include "serial/serialcommands.h"
 #include "status/TPSCounter.h"
+#if ENABLE_TELEMETRY
 #include "telemetry/TelemetryService.h"
+#endif
 
 Timer<> globalTimer;
+#if ENABLE_TELEMETRY
 SlimeVR::Telemetry::TelemetryService telemetryService;
+#endif
 SlimeVR::Logging::Logger logger("SlimeVR");
 SlimeVR::Sensors::SensorManager sensorManager;
 SlimeVR::LEDManager ledManager;
@@ -68,7 +72,9 @@ void setup() {
 	Serial.println();
 	Serial.println();
 
+#if ENABLE_TELEMETRY
 	telemetryService.setup();
+#endif
 	logger.info("SlimeVR v" FIRMWARE_VERSION " starting up...");
 
 	char vendorBuffer[512];
@@ -165,7 +171,9 @@ void setup() {
 }
 
 void loop() {
+#if ENABLE_TELEMETRY
 	telemetryService.beginLoop();
+#endif
 	tpsCounter.update();
 	globalTimer.tick();
 	SerialCommands::update();
@@ -183,8 +191,10 @@ void loop() {
 	battery.Loop();
 	ledManager.update();
 	I2CSCAN::update();
+#if ENABLE_TELEMETRY
 	telemetryService.endLoop();
 	telemetryService.update();
+#endif
 #ifdef TARGET_LOOPTIME_MICROS
 	long elapsed = (micros() - loopTime);
 	if (elapsed < TARGET_LOOPTIME_MICROS) {
